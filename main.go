@@ -48,9 +48,10 @@ type combiner struct {
 	module     string
 	outputDir  string
 	packages   map[string]*mainPackage
+	include    []string
 }
 
-func newCombiner(serviceDir string, outputDir string) (*combiner, error) {
+func newCombiner(serviceDir string, outputDir string, include []string) (*combiner, error) {
 	serviceDir, err := filepath.Abs(serviceDir)
 	if err != nil {
 		return nil, err
@@ -71,24 +72,61 @@ func newCombiner(serviceDir string, outputDir string) (*combiner, error) {
 		module:     module,
 		packages:   make(map[string]*mainPackage),
 		outputDir:  outputDir,
+		include:    include,
 	}, nil
 }
 
-func (c *combiner) collect(dir string) error {
-	walkFn := func(in string, info os.FileInfo, err error) error {
+var alwaysIgnore = []string{
+	".git",
+	"vendor",
+	".idea",
+	".github",
+}
+
+func (c *combiner) collect() error {
+	counter := 0
+
+	walkFn := func(fullPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
+		relativePath := strings.TrimPrefix(strings.TrimPrefix(fullPath, c.serviceDir), "/")
+
 		if info.IsDir() {
+			for _, ignore := range alwaysIgnore {
+				if ignore == relativePath {
+					return filepath.SkipDir
+				}
+			}
+
+			if fullPath == c.outputDir {
+				return filepath.SkipDir
+			}
+
 			return nil
 		}
 
-		if !strings.HasSuffix(in, ".go") || strings.HasSuffix(in, "_test.go") {
+		if len(c.include) > 0 && relativePath != "" {
+			found := false
+
+			for _, d := range c.include {
+				if strings.HasPrefix(relativePath, d+"/") {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				return nil
+			}
+		}
+
+		if !strings.HasSuffix(fullPath, ".go") || strings.HasSuffix(fullPath, "_test.go") {
 			return nil
 		}
 
-		ok, err := isMain(in)
+		ok, err := isMain(fullPath)
 		if err != nil {
 			return err
 		}
@@ -97,42 +135,38 @@ func (c *combiner) collect(dir string) error {
 			return nil
 		}
 
-		fmt.Println("collect", in)
-
-		dirName := filepath.Dir(in)
-		if dirName == c.outputDir {
-			return filepath.SkipDir
-		}
+		dirName := filepath.Dir(relativePath)
 
 		m := c.packages[dirName]
 		if m == nil {
-			dir := strings.TrimPrefix(c.outputDir, c.serviceDir)
-			importPath := path.Join(c.module, filepath.ToSlash(dir), strings.TrimPrefix(dirName, c.serviceDir))
+			replacer := strings.NewReplacer("-", "_", "/", "_")
+			packageName := replacer.Replace(dirName)
+			importPath := path.Join(c.module, strings.TrimPrefix(c.outputDir, c.serviceDir), packageName)
 
 			m = &mainPackage{
 				command:     filepath.Base(dirName),
 				importPath:  importPath,
 				contents:    make(map[string][]byte),
-				packageName: strings.NewReplacer("-", "_").Replace(filepath.Base(dirName)),
-				outputDir:   filepath.Join(c.outputDir, strings.TrimPrefix(dirName, c.serviceDir)),
+				packageName: packageName,
+				outputDir:   filepath.Join(c.outputDir, packageName),
 			}
 
-			fmt.Printf("%#v\n", m)
+			counter++
 
 			c.packages[dirName] = m
 		}
 
-		data, err := parseAndReplace(m.packageName, in)
+		data, err := parseAndReplace(m.packageName, fullPath)
 		if err != nil {
 			return err
 		}
 
-		m.contents[in] = data
+		m.contents[fullPath] = data
 
 		return nil
 	}
 
-	return filepath.Walk(filepath.Join(c.serviceDir, dir), walkFn)
+	return filepath.Walk(c.serviceDir, walkFn)
 }
 
 func (c *combiner) output() error {
@@ -140,7 +174,6 @@ func (c *combiner) output() error {
 
 	for _, m := range c.packages {
 		outputs = append(outputs, m)
-		//outDir := filepath.Join(c.outputDir, m.outputDir)
 		if err := os.MkdirAll(m.outputDir, 0755); err != nil {
 			return err
 		}
@@ -248,17 +281,21 @@ func parseAndReplace(packageName string, filename string) ([]byte, error) {
 }
 
 func main() {
+	log.SetFlags(0)
+
 	input := kingpin.Flag("input", "input directory").Default(".").ExistingDir()
 	output := kingpin.Flag("output", "out directory relative to input").Default("cmd/combined").String()
+	include := kingpin.Flag("include", "if set, only include these dirctories").Default().Strings()
+
 	kingpin.Parse()
 
-	c, err := newCombiner(*input, *output)
+	c, err := newCombiner(*input, *output, *include)
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := c.collect("cmd"); err != nil {
+	if err := c.collect(); err != nil {
 		log.Fatal(err)
 	}
 
