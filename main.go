@@ -17,6 +17,7 @@ import (
 
 	"github.com/fatih/astrewrite"
 	"golang.org/x/mod/modfile"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 // TODO investigate https://pkg.go.dev/golang.org/x/tools/go/ast/astutil#Apply
@@ -49,8 +50,13 @@ type combiner struct {
 	packages   map[string]*mainPackage
 }
 
-func newCombiner(serviceDir string) (*combiner, error) {
+func newCombiner(serviceDir string, outputDir string) (*combiner, error) {
 	serviceDir, err := filepath.Abs(serviceDir)
+	if err != nil {
+		return nil, err
+	}
+
+	outputDir, err = filepath.Abs(filepath.Join(serviceDir, outputDir))
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +70,7 @@ func newCombiner(serviceDir string) (*combiner, error) {
 		serviceDir: serviceDir,
 		module:     module,
 		packages:   make(map[string]*mainPackage),
-		outputDir:  filepath.Join("internal", "combiner"),
+		outputDir:  outputDir,
 	}, nil
 }
 
@@ -91,11 +97,17 @@ func (c *combiner) collect(dir string) error {
 			return nil
 		}
 
+		fmt.Println("collect", in)
+
 		dirName := filepath.Dir(in)
+		if dirName == c.outputDir {
+			return filepath.SkipDir
+		}
 
 		m := c.packages[dirName]
 		if m == nil {
-			importPath := path.Join(c.module, filepath.ToSlash(c.outputDir), strings.TrimPrefix(dirName, c.serviceDir))
+			dir := strings.TrimPrefix(c.outputDir, c.serviceDir)
+			importPath := path.Join(c.module, filepath.ToSlash(dir), strings.TrimPrefix(dirName, c.serviceDir))
 
 			m = &mainPackage{
 				command:     filepath.Base(dirName),
@@ -128,13 +140,13 @@ func (c *combiner) output() error {
 
 	for _, m := range c.packages {
 		outputs = append(outputs, m)
-		outDir := filepath.Join(c.serviceDir, m.outputDir)
-		if err := os.MkdirAll(outDir, 0755); err != nil {
+		//outDir := filepath.Join(c.outputDir, m.outputDir)
+		if err := os.MkdirAll(m.outputDir, 0755); err != nil {
 			return err
 		}
 
 		for file, data := range m.contents {
-			filename := filepath.Join(outDir, filepath.Base(file))
+			filename := filepath.Join(m.outputDir, filepath.Base(file))
 
 			if err := ioutil.WriteFile(filename, data, 0644); err != nil {
 				return err
@@ -147,7 +159,7 @@ func (c *combiner) output() error {
 	})
 
 	var buf bytes.Buffer
-	_, _ = buf.WriteString("package main\nimport (\n\"os\"\n\"fmt\"\n\"filepath\"\n\n")
+	_, _ = buf.WriteString("package main\nimport (\n\"os\"\n\"fmt\"\n\"path/filepath\"\n\n")
 
 	for _, m := range outputs {
 		_, _ = fmt.Fprintf(&buf, "%s %q\n", m.packageName, m.importPath)
@@ -167,13 +179,11 @@ func main() {
 
 	_, _ = buf.WriteString(`
 default:
-  fmt.Fprintf(os.Stderr, "unknown command %s", name)
+  fmt.Fprintf(os.Stderr, "unknown command %s\n", name)
   os.Exit(11)
 }
 }
 `)
-
-	fmt.Println(buf.String())
 
 	fset := token.NewFileSet()
 	mainAST, err := parser.ParseFile(fset, "main.go", buf.Bytes(), parser.ParseComments)
@@ -186,8 +196,13 @@ default:
 		return fmt.Errorf("failed to format code: %w", err)
 	}
 
-	fmt.Println(buf.String())
-	return nil
+	if err := os.MkdirAll(c.outputDir, 0755); err != nil {
+		return err
+	}
+
+	filename := filepath.Join(c.outputDir, "main.go")
+
+	return ioutil.WriteFile(filename, buf.Bytes(), 0644)
 }
 
 func isMain(filename string) (bool, error) {
@@ -233,7 +248,12 @@ func parseAndReplace(packageName string, filename string) ([]byte, error) {
 }
 
 func main() {
-	c, err := newCombiner(os.Args[0])
+	input := kingpin.Flag("input", "input directory").Default(".").ExistingDir()
+	output := kingpin.Flag("output", "out directory relative to input").Default("cmd/combined").String()
+	kingpin.Parse()
+
+	c, err := newCombiner(*input, *output)
+
 	if err != nil {
 		log.Fatal(err)
 	}
