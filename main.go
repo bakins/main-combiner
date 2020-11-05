@@ -245,49 +245,6 @@ func main() {
 	if err := c.output(); err != nil {
 		log.Fatal(err)
 	}
-
-	/*servicePath := "/Volumes/CaseSensitive/login/
-
-	name, err := GetModuleName("/Volumes/CaseSensitive/login/go.mod")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(name)
-
-	cfg := packages.Config{
-		Mode: packages.NeedName,
-	}
-
-	pkgs, err := packages.Load(&cfg, "/Volumes/CaseSensitive/login/cmd")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(pkgs)
-
-	fset := token.NewFileSet()
-	data, err := ioutil.ReadFile("/Volumes/CaseSensitive/login/cmd/login/main.go")
-	if err != nil {
-		log.Fatal(err)
-	}
-	oldAST, err := parser.ParseFile(fset, "/Volumes/CaseSensitive/login/cmd/login/main.go", data, parser.ParseComments|parser.Trace)
-	if err != nil {
-		log.Fatalf("failed to parse input: %v", err)
-	}
-
-	v := &visitor{}
-
-	newAST := astrewrite.Walk(oldAST, v.visit)
-
-	buf := &bytes.Buffer{}
-	err = format.Node(buf, fset, newAST)
-	if err != nil {
-		log.Fatalf("error formatting new code: %v", err)
-	}
-
-	fmt.Println(buf.String())
-	*/
 }
 
 type transform struct {
