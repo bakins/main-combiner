@@ -233,7 +233,7 @@ func parseAndReplace(packageName string, filename string) ([]byte, error) {
 }
 
 func main() {
-	c, err := newCombiner("/Volumes/CaseSensitive/login/")
+	c, err := newCombiner(os.Args[0])
 	if err != nil {
 		log.Fatal(err)
 	}
